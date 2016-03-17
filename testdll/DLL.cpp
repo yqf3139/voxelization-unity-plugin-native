@@ -831,8 +831,6 @@ void construct(int ledx, int ledy, int ledz)
 	printf("construct done\n");
 }
 
-const bool LITTLEMODE = true;
-
 void constructCylinder(
 	int _floorCounter, int _roundsCounter, float _step, float _distance, float _height, float _pillar)
 {
@@ -849,10 +847,6 @@ void constructCylinder(
 	for (int i = 0; i < roundsCounter; i++)
 	{
 		diameter = (pillar + (i + 1) * step * 2);
-		if (LITTLEMODE && i == 1 && roundsCounter == 2)
-		{
-			diameter = (pillar + (i + 1 + 1) * step * 2);
-		}
 		radius = diameter / 2;
 		perimeter = diameter * 3.14f;
 		counter = (int)(perimeter / distance + 1.5f);
