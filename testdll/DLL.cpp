@@ -653,6 +653,9 @@ static void clearvox()
 	hash_init();
 	memset(rlehead, -1, MAXDIM*MAYDIM*sizeof(rlehead[0]));
 	memset(output, 0, 200 * 200 * 200 * sizeof(int));
+	//memset(lastx, 0, MAXDIM*sizeof(float));
+	//memset(fbuf, 0, sizeof(cpoint4d)*FILLBUFSIZ);
+	//memset(zlst, 0, sizeof(unsigned short)*MAXZDIM);
 }
 
 static void savevox()
@@ -680,18 +683,18 @@ static void savevox()
 					tmpx = 2 * tmpx - ysiz;
 					tmpz = 2 * tmpz - zsiz;
 
-					fx = (int)(((float)tmpx / ysiz) * radius);
-					fz = (int)(((float)tmpz / zsiz) * radius);
-					if (fz > radius || fx > radius)
+					fx = (int)(((0.5f + tmpx) / ysiz) * radius);
+					fz = (int)(((0.5f + tmpz) / zsiz) * radius);
+					if (fz > radius || fx > radius || fz < (-radius) || fx < (-radius))
 						continue;
 
 					distanceTo0 = sqrtf(fx * fx + fz * fz);
-					if (distanceTo0 < 1.0f || distanceTo0 > radius)
+					if (distanceTo0 <= pillar || distanceTo0 >= radius)
 						continue;
 
 					realx = (int)(((float)tmpy / xsiz) * floorCounter);
 
-					realy = (int)(distanceTo0 / step - 1.5f);
+					realy = (int)((distanceTo0 - pillar / 2) / step);
 					realy = realy < 0 ? 0 : realy;
 
 					angleShareCount = numPerRound[realy];
@@ -699,7 +702,7 @@ static void savevox()
 					angle = acosf(fx / distanceTo0);
 					angle = fz >= 0 ? angle : 2 * PI - angle;
 					realz = (int)(angle / oneShare);
-					realz = realz < 0 || realz == angleShareCount ? 0 : realz;
+					realz = realz < 0 || realz >= angleShareCount ? 0 : realz;
 				}
 				else 
 				{
@@ -761,17 +764,17 @@ void voxel(int _numobjects, int _numverts, int _numtris, int _matnum)
 {
 	numobjects = _numobjects;
 	numverts = _numverts;
-	numtris = _numtris;
+	numtris = _numtris / 3;
 	matnum = _matnum+1;
 
 	// copy input data from buffers to local structs arrays
-	for (int i = 0; i < _numverts; i++)
+	for (int i = 0; i < numverts; i++)
 	{
 		vert[i].x = vertbuffer[3 * i + 0];
 		vert[i].y = vertbuffer[3 * i + 1];
 		vert[i].z = vertbuffer[3 * i + 2];
 	}
-	for (int i = 0; i < _numtris; i++)
+	for (int i = 0; i < numtris; i++)
 	{
 		tri[i].x = tribuffer[i * 3 + 0];
 		tri[i].y = tribuffer[i * 3 + 1];
@@ -848,8 +851,8 @@ void constructCylinder(
 	{
 		diameter = (pillar + (i + 1) * step * 2);
 		radius = diameter / 2;
-		perimeter = diameter * 3.14f;
-		counter = (int)(perimeter / distance + 1.5f);
+		perimeter = diameter * 3.1415926f;
+		counter = (int)(perimeter / distance + 1.0f);
 		float angle = 2.0f * PI / counter;
 
 		numPerRound[i] = counter;
@@ -861,7 +864,7 @@ void constructCylinder(
 		}
 	}
 
-	construct((int)(counter / 3.0f), (int)(floorCounter), (int)(counter / 3.0f));
+	construct((int)(1.5f * counter / 3.0f), (int)(1.5f * floorCounter), (int)(1.5f * counter / 3.0f));
 	printf("r %f, LEDX %d\n", radius, (int)(counter / 3.0f));
 	printf("constructCylinder done\n");
 }
