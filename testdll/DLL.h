@@ -17,7 +17,7 @@
 #endif
 
 #if !defined(PI)
-#define PI 3.1415926
+#define PI 3.14159
 #endif
 
 #include <basetsd.h>
@@ -61,6 +61,8 @@ extern "C" _DLLExport int* getColourBuffer();
 
 extern "C" _DLLExport int* getTriMatBuffer();
 
+extern "C" _DLLExport float* getBondBuffer();
+
 extern "C" _DLLExport void voxel(int, int, int, int);
 
 extern "C" _DLLExport void construct(int, int, int);
@@ -69,3 +71,12 @@ extern "C" _DLLExport void constructCylinder(
 	int, int, float, float, float, float);
 
 extern "C" _DLLExport void deconstruct();
+
+extern "C" _DLLExport void setGradientColor(
+	bool, int, int, int, int, int, int, int);
+
+extern "C" _DLLExport void setSolidFill(
+	bool);
+
+extern "C" _DLLExport void setFillColor(
+	int);

@@ -16,6 +16,7 @@ static hashdat_t *hashdat = 0;
 static int hashead[1 << LHASHEAD], hashcnt = 0;
 
 static int xsiz, ysiz, zsiz;
+static int xyzsiz[3];
 static float lastx[MAYDIM], xpiv, ypiv, zpiv;
 
 static int SAMLEMODE = 0;
@@ -25,8 +26,17 @@ static int frameidx = 0;
 
 static int numobjects = 0, numverts = 0, numtris = 0, matnum;
 
+static bool useGradientColor = false;
+static bool useSolidFill = true;
+static int solidFillColor = 0xffffff00;
+static int gaxle = 1, g0r = 0x00, g0g = 0x00, g0b = 0xff, g1r = 0xcc, g1g = 0x00, g1b = 0xff;
+
 static int output[200][200][200];
+static int output4[200][200][200][4];
 static int ledpal[257];
+static int gpal1D[200];
+static int gpal2D[200][200];
+static float bonds[6];
 static float vertbuffer[32768 << 2];
 static int tribuffer[32768 << 2];
 static int trimatbuffer[32768];
@@ -42,6 +52,16 @@ static float diameter, radius, perimeter;
 
 static point3d positions[20][200];
 static int numPerRound[20];
+
+static int directions[6][3] = 
+{
+	{ -1, 0, 0 },
+	{ +1, 0, 0 },
+	{ 0, -1, 0 },
+	{ 0, +1, 0 },
+	{ 0, 0, -1 },
+	{ 0, 0, +1 },
+};
 
 static void vox_free();
 
@@ -97,14 +117,13 @@ static void hash_set(int x, int y, int z, int v)
 	hashdat[hashcnt].itri = v;
 	hashcnt++;
 }
-static int getpix32(int x, int y, int z)
+static __forceinline int getpix32(int x, int y, int z)
 {
 	int i;
 
 	i = hash_get(x, y, z);
 	if (i < 0)
 	{
-		// printf("hash_get 0");
 		return(0x808080);
 	}
 
@@ -296,7 +315,7 @@ static void vox_free(void)
 	if (rle) { free(rle); rle = 0; }
 }
 
-static int vox_test(int x, int y, int z)
+static __forceinline int vox_test(int x, int y, int z)
 {
 	int i, ind, n;
 
@@ -574,6 +593,7 @@ static void hollowfix(int xlen, int ylen, int zlen)
 //Calculate scale and scale the verts -------------------------------------------------------
 
 static float sf, sfx, sfy, sfz;
+static float g_fx0, g_fy0, g_fz0, g_fx1, g_fy1, g_fz1;
 
 static void getscale(int voxdim)
 {
@@ -581,18 +601,31 @@ static void getscale(int voxdim)
 	int x, y, z, i, j;
 	// Scale data to specified resolution ---------------------------------------
 
-	fx0 = 1e32f; fx1 = -1e32f;
-	fy0 = 1e32f; fy1 = -1e32f;
-	fz0 = 1e32f; fz1 = -1e32f;
-	for (z = 0;z<numverts;z++)
+	if (STATICSPACE)
 	{
-		if (vert[z].x < fx0) fx0 = vert[z].x;
-		if (vert[z].y < fy0) fy0 = vert[z].y;
-		if (vert[z].z < fz0) fz0 = vert[z].z;
-		if (vert[z].x > fx1) fx1 = vert[z].x;
-		if (vert[z].y > fy1) fy1 = vert[z].y;
-		if (vert[z].z > fz1) fz1 = vert[z].z;
+		fx0 = bonds[0] - bonds[3]; fx1 = bonds[0] + bonds[3];
+		fy0 = bonds[1] - bonds[4]; fy1 = bonds[1] + bonds[4];
+		fz0 = bonds[2] - bonds[5]; fz1 = bonds[2] + bonds[5];
 	}
+	else
+	{
+		fx0 = 1e32f; fx1 = -1e32f;
+		fy0 = 1e32f; fy1 = -1e32f;
+		fz0 = 1e32f; fz1 = -1e32f;
+		for (z = 0;z<numverts;z++)
+		{
+			if (vert[z].x < fx0) fx0 = vert[z].x;
+			if (vert[z].y < fy0) fy0 = vert[z].y;
+			if (vert[z].z < fz0) fz0 = vert[z].z;
+			if (vert[z].x > fx1) fx1 = vert[z].x;
+			if (vert[z].y > fy1) fy1 = vert[z].y;
+			if (vert[z].z > fz1) fz1 = vert[z].z;
+		}
+	}
+
+	g_fx0 = fx0; g_fx1 = fx1;
+	g_fy0 = fy0; g_fy1 = fy1;
+	g_fz0 = fz0; g_fz1 = fz1;
 
 	printf("%9.6f,%9.6f,%9.6f\n", fx0, fy0, fz0);
 	printf("%9.6f,%9.6f,%9.6f\n", fx1, fy1, fz1);
@@ -614,9 +647,9 @@ static void getscale(int voxdim)
 	}
 	if (voxdim <= 0) quitout("error: voxdim must be > 0");
 
-	xsiz = cvtss2si((fy1 - fy0)*sf + .5f); if (xsiz > 256) printf(" WARNING: xsiz > 256!");
-	ysiz = cvtss2si((fx1 - fx0)*sf + .5f); if (ysiz > 256) printf(" WARNING: ysiz > 256!");
-	zsiz = cvtss2si((fz1 - fz0)*sf + .5f); if (zsiz > 256) printf(" WARNING: zsiz > 256!");
+	xyzsiz[1] = xsiz = cvtss2si((fy1 - fy0)*sf + .5f); if (xsiz > 256) printf(" WARNING: xsiz > 256!");
+	xyzsiz[0] = ysiz = cvtss2si((fx1 - fx0)*sf + .5f); if (ysiz > 256) printf(" WARNING: ysiz > 256!");
+	xyzsiz[2] = zsiz = cvtss2si((fz1 - fz0)*sf + .5f); if (zsiz > 256) printf(" WARNING: zsiz > 256!");
 
 	sfy = fy0; sfx = fx0; sfz = fz1;
 
@@ -639,6 +672,14 @@ static void scale()
 	for (z = 0;z<numverts;z++)
 	{
 		oldp = *(point3d *)&vert[z];
+
+		if (oldp.x < g_fx0) { oldp.x = g_fx0; }
+		if (oldp.y < g_fy0) { oldp.y = g_fy0; }
+		if (oldp.z < g_fz0) { oldp.z = g_fz0; }
+		if (oldp.x > g_fx1) { oldp.x = g_fx1; }
+		if (oldp.y > g_fy1) { oldp.y = g_fy1; }
+		if (oldp.z > g_fz1) { oldp.z = g_fz1; }
+
 		vert[z].x = (oldp.y - sfy)*sf + .05f;
 		vert[z].y = (oldp.x - sfx)*sf + .05f;
 		vert[z].z = (sfz - oldp.z)*sf + .05f;
@@ -653,14 +694,11 @@ static void clearvox()
 	hash_init();
 	memset(rlehead, -1, MAXDIM*MAYDIM*sizeof(rlehead[0]));
 	memset(output, 0, 200 * 200 * 200 * sizeof(int));
-	//memset(lastx, 0, MAXDIM*sizeof(float));
-	//memset(fbuf, 0, sizeof(cpoint4d)*FILLBUFSIZ);
-	//memset(zlst, 0, sizeof(unsigned short)*MAXZDIM);
 }
 
 static void savevox()
 {
-	int i, j, x, y, z;
+	int i, j, x, y, z, c, tmp1, tmp2;
 
 	if (257 < matnum)quitout("Error: 257 < matnum");
 	for (i = 0;i<matnum;i++)
@@ -670,6 +708,7 @@ static void savevox()
 
 	int realx, realy, realz, tmpx, tmpy, tmpz, angleShareCount;
 	float fx, fz, distanceTo0, oneShare, angle;
+	int gcolor;
 	for (x = 0;x<xsiz;x++)
 		for (y = 0;y<ysiz;y++)
 			for (z = 0;z<zsiz;z++)
@@ -694,47 +733,334 @@ static void savevox()
 
 					realx = (int)(((float)tmpy / xsiz) * floorCounter);
 
-					realy = (int)((distanceTo0 - pillar / 2) / step);
+					//realy = (int)((distanceTo0 - pillar / 2) / step);
+					realy = (int)(distanceTo0 / step);
 					realy = realy < 0 ? 0 : realy;
 
 					angleShareCount = numPerRound[realy];
 					oneShare = 2.0f * PI / angleShareCount;
 					angle = acosf(fx / distanceTo0);
-					angle = fz >= 0 ? angle : 2 * PI - angle;
+					angle = fz >= 0 ? angle : 2.0f * PI - angle;
 					realz = (int)(angle / oneShare);
 					realz = realz < 0 || realz >= angleShareCount ? 0 : realz;
+
+					switch (gaxle)
+					{
+					case 1:
+						gcolor = gpal1D[tmpy];
+						break;
+					case 0:
+					case 2:
+						gcolor = gpal2D[realy][realz];
+						break;
+					}
 				}
 				else 
 				{
 					realx = y;
 					realy = x;
 					realz = zsiz - 1 - z;
+					switch (gaxle)
+					{
+					case 0:gcolor = gpal1D[realx];break;
+					case 1:gcolor = gpal1D[realy];break;
+					case 2:gcolor = gpal1D[realz];break;
+					}
 				}
 
 				if (!vox_test(x, y, z))
 				{
-					output[realx][realy][realz] = 0; // blank, transparent
+					output[realx][realy][realz] |= 0; // blank, transparent
+					continue;
+				}
+
+				if (useSolidFill)
+				{
+					// find the color surround by colors and mark as white(inner)
+					j = 0;
+					if ((!vox_test(x - 1, y, z)))
+					{
+						j |= 1;
+					}
+					if ((!vox_test(x + 1, y, z)))
+					{
+						j |= 2;
+					}
+					if ((!vox_test(x, y - 1, z)))
+					{
+						j |= 4;
+					}
+					if ((!vox_test(x, y + 1, z)))
+					{
+						j |= 8;
+					}
+					if ((!vox_test(x, y, z - 1)))
+					{
+						j |= 16;
+					}
+					if ((!vox_test(x, y, z + 1)))
+					{
+						j |= 32;
+					}
+
+					if (!j)
+					{
+						output[realx][realy][realz] |= useGradientColor ? gcolor : solidFillColor; // half white 0xffffff00
+						continue;
+					}
+				}
+
+				c = getpix32(x, y, z);
+				if (c & 0x7f000000)
+				{
+					if (!output[realx][realy][realz])
+					{
+						output[realx][realy][realz] = useGradientColor ? gcolor : (c << 8);
+					}
+					else
+					{
+						// TODO avg
+						//tmp1 = useGradientColor ? gcolor : (c << 8);
+						//tmp2 = output[realx][realy][realz];
+						//output[realx][realy][realz] = (tmp1 & tmp2) | ((tmp1 ^ tmp2) >> 1);
+					}
+				}
+				else
+				{
+					output[realx][realy][realz] |= useGradientColor ? gcolor : ledpal[getpix32(x, y, z)];
+				}
+
+				//if (c < MAXTRIS)
+				//{
+				//	output[realx][realy][realz] |= useGradientColor ? gcolor : (c << 8);
+				//}
+				//else
+				//{
+				//	//output[realx][realy][realz] |= useGradientColor ? gcolor : ledpal[getpix32(x, y, z)];
+				//	output[realx][realy][realz] |= 0xff000000;
+				//}
+
+			}
+}
+
+static int getshellcolor(int x, int y, int z)
+{
+	int level = 1, xx, yy, zz;
+
+	while (true)
+	{
+		level++;
+		for (int dir = 0; dir < 6; dir++)
+		{
+			xx = x + level * directions[dir][0];
+			yy = y + level * directions[dir][1];
+			zz = z + level * directions[dir][2];
+
+			if (xx == xsiz) return getpix32(xx - 1, yy, zz);
+			if (yy == ysiz) return getpix32(xx, yy - 1, zz);
+			if (zz == zsiz) return getpix32(xx, yy, zz - 1);
+
+			if (xx == -1) return getpix32(xx + 1, yy, zz);
+			if (yy == -1) return getpix32(xx, yy + 1, zz);
+			if (zz == -1) return getpix32(xx, yy, zz + 1);
+
+			if (!vox_test(xx, yy, zz))
+			{
+				level--;
+				return getpix32(
+					x + level * directions[dir][0], 
+					y + level * directions[dir][1], 
+					z + level * directions[dir][2]);
+			}
+		}
+	}
+	return 0x7fffffff;
+}
+
+static void savevox2()
+{
+	memset(output4, 0, sizeof(int) * 200 * 200 * 200 * 4);
+
+	int i, j, x, y, z, c, tmp1, tmp2;
+
+	if (257 < matnum)quitout("Error: 257 < matnum");
+	for (i = 0;i<matnum;i++)
+	{
+		ledpal[i] = colrgb[i] << 8;
+	}
+
+	int realx, realy, realz, tmpx, tmpy, tmpz, angleShareCount;
+	float fx, fz, distanceTo0, oneShare, angle;
+	int gcolor, target;
+	for (x = 0;x<xsiz;x++)
+		for (y = 0;y<ysiz;y++)
+			for (z = 0;z<zsiz;z++)
+			{
+				if (SAMLEMODE)
+				{
+					tmpx = y;
+					tmpy = x;
+					tmpz = zsiz - 1 - z;
+
+					tmpx = 2 * tmpx - ysiz;
+					tmpz = 2 * tmpz - zsiz;
+
+					fx = (int)(((0.5f + tmpx) / ysiz) * radius);
+					fz = (int)(((0.5f + tmpz) / zsiz) * radius);
+					if (fz > radius || fx > radius || fz < (-radius) || fx < (-radius))
+						continue;
+
+					distanceTo0 = sqrtf(fx * fx + fz * fz);
+					if (distanceTo0 <= pillar || distanceTo0 >= radius)
+						continue;
+
+					realx = (int)(((float)tmpy / xsiz) * floorCounter);
+
+					realy = (int)(distanceTo0 / step);
+					realy = realy < 0 ? 0 : realy;
+
+					angleShareCount = numPerRound[realy];
+					oneShare = 2.0f * PI / angleShareCount;
+					angle = acosf(fx / distanceTo0);
+					angle = fz >= 0 ? angle : 2.0f * PI - angle;
+					realz = (int)(angle / oneShare);
+					realz = realz < 0 || realz >= angleShareCount ? 0 : realz;
+
+					switch (gaxle)
+					{
+					case 1:
+						gcolor = gpal1D[tmpy];
+						break;
+					case 0:
+					case 2:
+						gcolor = gpal2D[realy][realz];
+						break;
+					}
+				}
+				else
+				{
+					realx = y;
+					realy = x;
+					realz = zsiz - 1 - z;
+					switch (gaxle)
+					{
+					case 0:gcolor = gpal1D[realx];break;
+					case 1:gcolor = gpal1D[realy];break;
+					case 2:gcolor = gpal1D[realz];break;
+					}
+				}
+
+				if (!vox_test(x, y, z))
+				{
 					continue;
 				}
 
 				// find the color surround by colors and mark as white(inner)
 				j = 0;
-				if ((!vox_test(x - 1, y, z))) j |= 1;
-				if ((!vox_test(x + 1, y, z))) j |= 2;
-				if ((!vox_test(x, y - 1, z))) j |= 4;
-				if ((!vox_test(x, y + 1, z))) j |= 8;
-				if ((!vox_test(x, y, z - 1))) j |= 16;
-				if ((!vox_test(x, y, z + 1))) j |= 32;
+				if ((!vox_test(x - 1, y, z)))
+				{
+					j |= 1;
+				}
+				if ((!vox_test(x + 1, y, z)))
+				{
+					j |= 2;
+				}
+				if ((!vox_test(x, y - 1, z)))
+				{
+					j |= 4;
+				}
+				if ((!vox_test(x, y + 1, z)))
+				{
+					j |= 8;
+				}
+				if ((!vox_test(x, y, z - 1)))
+				{
+					j |= 16;
+				}
+				if ((!vox_test(x, y, z + 1)))
+				{
+					j |= 32;
+				}
 
 				if (!j)
 				{
-					output[realx][realy][realz] = 0xffffff00; // full white
-					continue;
+					c = getshellcolor(x, y, z);
+				}
+				else
+				{
+					c = getpix32(x, y, z);
 				}
 
-				output[realx][realy][realz] = ledpal[getpix32(x, y, z)];
+				if (c & 0x7f000000)
+				{
+					target = useGradientColor ? gcolor : (c << 8);
+				}
+				else
+				{
+					target = useGradientColor ? gcolor : ledpal[c];
+				}
+
+				output4[realx][realy][realz][0]++;
+				output4[realx][realy][realz][1] += (target >> 24) & 0xff;
+				output4[realx][realy][realz][2] += (target >> 16) & 0xff;
+				output4[realx][realy][realz][3] += (target >> 8 ) & 0xff;
 			}
 
+	for (x = 0;x<xsiz;x++)
+		for (y = 0;y<ysiz;y++)
+			for (z = 0;z < zsiz;z++)
+			{
+				if (output4[x][y][z][0] == 0)
+				{
+					continue;
+				}
+				output4[x][y][z][1] /= output4[x][y][z][0];
+				output4[x][y][z][2] /= output4[x][y][z][0];
+				output4[x][y][z][3] /= output4[x][y][z][0];
+
+				output[x][y][z] = (output4[x][y][z][1] << 24) | (output4[x][y][z][2] << 16) | (output4[x][y][z][3] << 8);
+			}
+}
+
+static void genGpal1D()
+{
+	float stepr = (float)(g1r - g0r) / (float)xyzsiz[gaxle];
+	float stepg = (float)(g1g - g0g) / (float)xyzsiz[gaxle];
+	float stepb = (float)(g1b - g0b) / (float)xyzsiz[gaxle];
+
+	for (int i = 0; i < xyzsiz[gaxle]; i++)
+	{
+		gpal1D[i] = 0;
+		gpal1D[i] |= ((int)(g0r + stepr*i) & 0xff) << 24;
+		gpal1D[i] |= ((int)(g0g + stepg*i) & 0xff) << 16;
+		gpal1D[i] |= ((int)(g0b + stepb*i) & 0xff) << 8;
+	}
+}
+
+static void genGpal2DDisc()
+{
+	if (gaxle == 1)
+	{
+		return;
+	}
+	float stepr = (float)(g1r - g0r) / (float)diameter;
+	float stepg = (float)(g1g - g0g) / (float)diameter;
+	float stepb = (float)(g1b - g0b) / (float)diameter;
+
+	int gcolor, len;
+	for (int i = 0; i < roundsCounter; i++)
+	{
+		for (int j = 0; j < numPerRound[i]; j++)
+		{
+			gcolor = 0;
+			len = gaxle == 0 ? positions[i][j].x + radius : positions[i][j].z + radius;
+			gcolor |= ((int)(g0r + stepr*len) & 0xff) << 24;
+			gcolor |= ((int)(g0g + stepg*len) & 0xff) << 16;
+			gcolor |= ((int)(g0b + stepb*len) & 0xff) << 8;
+
+			gpal2D[i][j] = gcolor;
+		}
+	}
 }
 
 // =================== bridge to Unity 3D =================== //
@@ -760,6 +1086,8 @@ int* getColourBuffer() { return colrgb; }
 
 int* getTriMatBuffer() { return (int *)trimatbuffer; }
 
+float* getBondBuffer() { return (float *)bonds; }
+
 void voxel(int _numobjects, int _numverts, int _numtris, int _matnum)
 {
 	numobjects = _numobjects;
@@ -779,7 +1107,7 @@ void voxel(int _numobjects, int _numverts, int _numtris, int _matnum)
 		tri[i].x = tribuffer[i * 3 + 0];
 		tri[i].y = tribuffer[i * 3 + 1];
 		tri[i].z = tribuffer[i * 3 + 2];
-		tri[i].i = trimatbuffer[i] + 1;
+		tri[i].i = trimatbuffer[i] & 0x7f000000 ? trimatbuffer[i] : trimatbuffer[i] + 1;
 	}
 
 	frameidx++;
@@ -789,8 +1117,15 @@ void voxel(int _numobjects, int _numverts, int _numtris, int _matnum)
 	// only calculate it on the first time
 	if (!STATICSPACE || frameidx == 1)
 	{
-		// TODO : input vox space box
 		getscale(LEDXYZMAX);
+		if (useGradientColor)
+		{
+			genGpal1D();
+			if (SAMLEMODE == 1)
+			{
+				genGpal2DDisc();
+			}
+		}
 	}
 	scale();
 
@@ -802,10 +1137,13 @@ void voxel(int _numobjects, int _numverts, int _numtris, int _matnum)
 	}
 
 	// fill the inside of the models
-	hollowfix(xsiz, ysiz, zsiz);
+	if (useSolidFill)
+	{
+		hollowfix(xsiz, ysiz, zsiz);
+	}
 
 	// output to the color matrix
-	savevox();
+	savevox2();
 }
 
 FILE * pConsole;
@@ -839,6 +1177,9 @@ void constructCylinder(
 {
 	SAMLEMODE = 1;
 
+	AllocConsole();
+	freopen_s(&pConsole, "CONOUT$", "wb", stdout);
+
 	floorCounter = _floorCounter;
 	roundsCounter = _roundsCounter;
 	step = _step;
@@ -849,10 +1190,15 @@ void constructCylinder(
 	int counter;
 	for (int i = 0; i < roundsCounter; i++)
 	{
-		diameter = (pillar + (i + 1) * step * 2);
+		//diameter = (pillar + (i + 1) * step * 2);
+		diameter = (i + 1) * step * 2;
+
 		radius = diameter / 2;
-		perimeter = diameter * 3.1415926f;
-		counter = (int)(perimeter / distance + 1.0f);
+		perimeter = diameter * PI;
+		counter = (int)(perimeter / 2.0f / distance);
+		if (i != 0) counter++;
+		counter <<= 1;
+		printf("round %d : %d\n", i + 1, counter);
 		float angle = 2.0f * PI / counter;
 
 		numPerRound[i] = counter;
@@ -864,10 +1210,13 @@ void constructCylinder(
 		}
 	}
 
-	construct((int)(1.5f * counter / 3.0f), (int)(1.5f * floorCounter), (int)(1.5f * counter / 3.0f));
+	float largeScale = 2.0f;
+
+	construct((int)(largeScale * counter / 3.0f), (int)(largeScale * floorCounter), (int)(largeScale * counter / 3.0f));
 	printf("r %f, LEDX %d\n", radius, (int)(counter / 3.0f));
 	printf("constructCylinder done\n");
 }
+
 
 void deconstruct()
 {
@@ -880,4 +1229,34 @@ void deconstruct()
 	if (vert) free(vert);
 	vox_free();
 	fclose(pConsole);
+}
+
+void setGradientColor(
+	bool _enable, int _axle,
+	int _g0r, int _g0g, int _g0b,
+	int _g1r, int _g1g, int _g1b)
+{
+	useGradientColor = _enable;
+	gaxle = _axle;
+	g0r = _g0r > -1 && _g0r < 256 ? _g0r : g0r;
+	g0g = _g0g > -1 && _g0g < 256 ? _g0g : g0g;
+	g0b = _g0b > -1 && _g0b < 256 ? _g0b : g0b;
+	g1r = _g1r > -1 && _g1r < 256 ? _g1r : g1r;
+	g1g = _g1g > -1 && _g1g < 256 ? _g1g : g1g;
+	g1b = _g1b > -1 && _g1b < 256 ? _g1b : g1b;
+
+	if (useGradientColor && frameidx > 1)
+	{
+		genGpal1D();
+	}
+}
+
+void setSolidFill(bool _useSolidFill)
+{
+	useSolidFill = _useSolidFill;
+}
+
+void setFillColor(int _color)
+{
+	solidFillColor = _color;
 }
