@@ -827,8 +827,8 @@ static void savevox2()
 				output4[realx][realy][realz][3] += (target >> 8 ) & 0xff;
 			}
 
-	for (x = 0;x<xsiz;x++)
-		for (y = 0;y<ysiz;y++)
+	for (x = 0;x<ysiz;x++)
+		for (y = 0;y<xsiz;y++)
 			for (z = 0;z < zsiz;z++)
 			{
 				if (output4[x][y][z][0] == 0)
@@ -939,7 +939,7 @@ void voxel(int _numobjects, int _numverts, int _numtris, int _matnum)
 	// calculate current scale
 	// if the space dimensions are static
 	// only calculate it on the first time
-	if (!STATICSPACE || frameidx == 1)
+	if (frameidx == 1)
 	{
 		getscale(LEDXYZMAX);
 		if (useGradientColor)
@@ -1053,6 +1053,12 @@ void deconstruct()
 	if (vert) free(vert);
 	vox_free();
 	fclose(pConsole);
+
+	hashdat = 0;
+	colrgb = 0;
+	tri = 0;
+	vert = 0;
+	pConsole = 0;
 }
 
 void setGradientColor(
